@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import math
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import os
 
 from Dataset.hypersim_image_pair_dataset import HypersimImagePairDataset
 
@@ -14,21 +15,22 @@ MIN_MATCH_COUNT = 8
 FLANN_INDEX_KDTREE = 1
 
 def getBestMatches(ref_des, q_des, ratio=0.9):
-    bf = cv2.BFMatcher()
+    bf = cv2.BFMatcher(crossCheck=True)
     # return  bf.match(ref_des, q_des)
     # index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
     # search_params = dict(checks=50)
     # flann = cv2.FlannBasedMatcher(index_params, search_params)
-    matches = bf.knnMatch(ref_des, q_des, k=2)  # first k best matches
+    matches = bf.match(ref_des, q_des)  # first k best matches
 
-    best_matches = []
-
+    # best_matches = []
     # from Lowe's
-    for i, (m, n) in enumerate(matches):
-        if m.distance < ratio * n.distance:
-            best_matches.append(m)
+    # for i, (m, n) in enumerate(matches):
+    #     if m.distance < ratio * n.distance:
+    #         best_matches.append(m)
+    # # print(type(best_matches[0]))
 
-    return best_matches
+    return matches
+
 
 def rotationMatrixToEulerAngles(R):
     sy = math.sqrt(R[0, 0] * R[0, 0] + R[1, 0] * R[1, 0])
@@ -156,14 +158,16 @@ def evaluate_R_t(R_gt, t_gt, R, t, q_gt=None):
     return err_q, err_t
 
 
-def main():
+def process_scene(scene_name):
     # load dataset
-    dataset = HypersimImagePairDataset(data_dir="/home/junchi/sp1/dataset/hypersim", scene_name='ai_001_001')
+    dataset = HypersimImagePairDataset(data_dir="/cluster/project/infk/cvg/students/junwang/hypersim", scene_name=scene_name)
     loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
 
     err_q_list = []
     err_t_list = []
     for step, batch in tqdm(enumerate(loader), total=len(loader)):
+        # if step == 5:
+        #     break
         sample_1 = batch['sample_1']
         sample_2 = batch['sample_2']
         gt_match = batch['gt_match']
@@ -187,7 +191,7 @@ def main():
         sift = cv2.SIFT_create()
         ref_kp, ref_des = sift.detectAndCompute(gray_1, None)
         q_kp, q_des = sift.detectAndCompute(gray_2, None)
-        best_matches = getBestMatches(ref_des, q_des, ratio=0.95)
+        best_matches = getBestMatches(ref_des, q_des, ratio=0.7)
 
         img3 = cv2.drawMatches(image_1, ref_kp, image_2, q_kp, best_matches[:], None)
         # plt.imshow(img3)
@@ -203,31 +207,65 @@ def main():
         src_pts = np.float32([ref_kp[m.queryIdx].pt for m in best_matches])
         dst_pts = np.float32([q_kp[m.trainIdx].pt for m in best_matches])
 
+        if len(dst_pts) < 5:
+            continue
+
         E, mask = cv2.findEssentialMat(src_pts, dst_pts, K, method=cv2.RANSAC, prob=0.99, threshold=0.5)
 
-        # draw the matching points that pass the RANSAC
-        draw_params = dict(matchColor=(0, 255, 0),  # draw matches in green color
-                           singlePointColor=None,
-                           matchesMask=mask.ravel().tolist(),  # draw only inliers
-                           flags=2)
-        img4 = cv2.drawMatches(image_1, ref_kp, image_2, q_kp, best_matches[:], None, **draw_params)
-        # plt.imshow(img4)
-        # plt.show()
-        # pass
+        if step % 10 == 0:
+            # draw the matching points that pass the RANSAC
+            draw_params = dict(matchColor=(0, 255, 0),  # draw matches in green color
+                            singlePointColor=None,
+                            matchesMask=mask.ravel().tolist(),  # draw only inliers
+                            flags=2)
+            img4 = cv2.drawMatches(image_1, ref_kp, image_2, q_kp, best_matches[:], None, **draw_params)
+            plt.imshow(img4)
+            plt.savefig("sift_preview/{}_{}.jpg".format(scene_name, step), dpi=300)
+            # plt.show()
+            # pass
 
-        points, R_est, t_est, mask_pose = cv2.recoverPose(E, src_pts, dst_pts, K)
+        points, R_est, t_est, mask_pose = cv2.recoverPose(E, src_pts, dst_pts, K, mask)
 
         # evaluate the estimated pose
         err_q, err_t = evaluate_R_t(gt_relative_pose[:3, :3], gt_relative_pose[:3, 3], R_est, t_est)
         err_q_list.append(err_q)
         err_t_list.append(err_t)
-        print('err_q: {:.4f}, err_t: {:.4f}'.format(err_q, err_t))
+        print('sample {}: err_q: {:.4f}, err_t: {:.4f}'.format(step, err_q, err_t))
         # pass
 
     print('mean err_q: {:.4f}, mean err_t: {:.4f}'.format(np.mean(err_q_list), np.mean(err_t_list)))
     print('median err_q: {:.4f}, median err_t: {:.4f}'.format(np.median(err_q_list), np.median(err_t_list)))
 
+    return {'err_q' : err_q_list, 
+            'err_t': err_t_list}
+
+
+
 if __name__ == '__main__':
-    main()
+    root_dir = "/cluster/project/infk/cvg/students/junwang/hypersimLite"
+    # scene_name = "ai_001_010"
+    # scene_list = ['ai_001_001', 'ai_001_002', 'ai_001_010']
+    test_list_path = os.path.join(root_dir, "test_scenes.txt")
+    with open(test_list_path, "r") as f:
+        test_scene = f.read().splitlines()
+    
+    err_q = []
+    err_t = []
+    count = 1
+    for scene in test_scene:
+        # if count == 3:
+        #     break
+        print("Processing scene {}".format(scene))
+        print("No {} / {}".format(count, len(test_scene)))
+        err = process_scene(scene)
+        err_q.append(err['err_q'])
+        err_t.append(err['err_t'])
+        count += 1
+    
+    err_q = np.concatenate(err_q)
+    err_t = np.concatenate(err_t)
+    print('mean err_q: {:.4f}, mean err_t: {:.4f}'.format(np.mean(err_q), np.mean(err_t)))
+    print('median err_q: {:.4f}, median err_t: {:.4f}'.format(np.median(err_q), np.median(err_t)))
+
 
 

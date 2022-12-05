@@ -8,6 +8,7 @@ import argparse
 import math
 
 import cv2
+import os
 import numpy as np
 import torch
 import yaml
@@ -24,35 +25,11 @@ from HomographyEstimation.predict_homography import predict_homography, extract_
 from Utility.utils import *
 
 
-def main():
+def process_scene(scene_name, plane_model, gem_model, raft_model):
     # load dataset
-    dataset = HypersimImagePairDataset(data_dir="/home/junchi/sp1/dataset/hypersim", scene_name='ai_001_001')
+    dataset = HypersimImagePairDataset(data_dir="/cluster/project/infk/cvg/students/junwang/hypersim", scene_name=scene_name)
     loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
-
-    # raft args
-    parser = argparse.ArgumentParser(description='Raft evaluation on HPatches')
-    # Paths
-    parser.add_argument('--cfg-file', type=str, default='/home/junchi/sp1/project_junchi/pythonProject/whole_pipeline/HomographyEstimation/config/s-coco/raft-orig-eval.yaml',
-                        help='path to training transformation csv folder')
-    parser.add_argument('--dataset_dir', type=str,
-                        default='/home/junchi/sp1/dataset/hypersim',
-                        help='path to folder containing training images')
-    parser.add_argument('--ckpt', type=str, default='/home/junchi/sp1/project_junchi/pythonProject/whole_pipeline/HomographyEstimation/trained_models/model_raft_scoco.pth',
-                        help='Checkpoint to use')
-    parser.add_argument('--batch-size', type=int, default=1,
-                        help='evaluation batch size')
-    parser.add_argument('--seed', type=int, default=1984, help='Pseudo-RNG seed')
-
-    raft_args = parser.parse_args()
-    with open(raft_args.cfg_file, 'r') as file:
-        config = yaml.full_load(file)
-
-    pec_weights_path = "/home/junchi/sp1/project_junchi/pythonProject/whole_pipeline/PlaneDetection/trained_models/pec_junchi.tar"
-    plane_model = load_plane_detector(pec_weights_path)
-    raft_model = load_model(raft_args, config)
-    network_path = '/home/junchi/sp1/project_junchi/pythonProject/whole_pipeline/PlaneMatching/trained_models/gl18-tl-resnet50-gem-w-83fdc30.pth'
-    gem_model = load_gem_model(network_path)
-
+    
     # evaluation
     err_q_essential = []
     err_t_essential = []
@@ -61,7 +38,7 @@ def main():
     err_q_ranked_homography = []
     err_t_ranked_homography = []
     for step, batch in tqdm(enumerate(loader), total=len(loader)):
-        # if step>20:
+        # if step>5:
         #     break
 
         sample_1 = batch['sample_1']
@@ -174,6 +151,13 @@ def main():
         err_t_list = []
         err_r_list = []
         min_num_points = 128*128 + 1
+
+        best_homo_id = -1
+        best_homo_metric = 1000
+        err_q_homo = []
+        err_t_homo = []
+        id = 0
+
         for i in range(len(pred_match)):
             matching_label = int(pred_match[i]) + 1
             if matching_label != 0:
@@ -219,11 +203,6 @@ def main():
                 origin_2 = (origin_x_2, origin_y_2)
                 H_full = restoreHomography(H, origin_1, origin_2)
                 n, Rs, Ts, _ = cv2.decomposeHomographyMat(H_full, K)
-                best_homo_id = 0
-                best_homo_metric = 1000
-                err_q_homo = []
-                err_t_homo = []
-                id = 0
                 for i in range(n):
                     print('check solution ', i)
                     R = Rs[i]
@@ -257,11 +236,17 @@ def main():
                     # r = Rotation.from_matrix(R)
                     # angles = r.as_euler("xyz", degrees=True)
                     # print('est angles from homography: ', angles)
-                err_q_best_homography.append(err_q_homo[best_homo_id])
-                err_t_best_homography.append(err_t_homo[best_homo_id])
+        if best_homo_id >= 0:
+            err_q_best_homography.append(err_q_homo[best_homo_id])
+            err_t_best_homography.append(err_t_homo[best_homo_id])
+            print('err_q for best homo ', err_q_homo[best_homo_id])
+            print('err_t for best homo ', err_t_homo[best_homo_id])
 
 
         # concat the sampled points
+        if len(points_src) == 0:
+            continue
+
         points_src_matching = np.concatenate(points_src, axis=0)
         points_dst_matching = np.concatenate(points_dst, axis=0)
         E, mask = cv2.findEssentialMat(points_src_matching, points_dst_matching, K, cv2.RANSAC, 0.999, 0.5, None)
@@ -333,6 +318,92 @@ def main():
     print('err_t_best_homography: ', np.mean(err_t_best_homography))
     print('err_q_ranked_homography: ', np.mean(err_q_ranked_homography))
     print('err_t_ranked_homography: ', np.mean(err_t_ranked_homography))
+
+    return {
+        'err_q_essential' : err_q_essential,
+        'err_t_essential' : err_t_essential,
+        'err_q_best_homography' : err_q_best_homography,
+        'err_t_best_homography' : err_t_best_homography,
+        'err_q_ranked_homography' : err_q_ranked_homography,
+        'err_t_ranked_homography' : err_t_ranked_homography
+    }
+
+def main():
+    # raft args
+    parser = argparse.ArgumentParser(description='Raft evaluation on HPatches')
+    # Paths
+    parser.add_argument('--cfg-file', type=str, default='/cluster/project/infk/cvg/students/junwang/SP1_wholePipeline/HomographyEstimation/config/s-coco/raft-orig-eval.yaml',
+                        help='path to training transformation csv folder')
+    parser.add_argument('--dataset_dir', type=str,
+                        default='/cluster/project/infk/cvg/students/junwang/hypersim',
+                        help='path to folder containing training images')
+    parser.add_argument('--ckpt', type=str, default='/cluster/project/infk/cvg/students/junwang/SP1_wholePipeline/HomographyEstimation/trained_models/model_raft_scoco.pth',
+                        help='Checkpoint to use')
+    parser.add_argument('--batch-size', type=int, default=1,
+                        help='evaluation batch size')
+    parser.add_argument('--seed', type=int, default=1984, help='Pseudo-RNG seed')
+
+    raft_args = parser.parse_args()
+    with open(raft_args.cfg_file, 'r') as file:
+        config = yaml.full_load(file)
+
+    pec_weights_path = "/cluster/project/infk/cvg/students/junwang/SP1_wholePipeline/PlaneDetection/trained_models/pec_junchi.tar"
+    plane_model = load_plane_detector(pec_weights_path)
+    raft_model = load_model(raft_args, config)
+    network_path = '/cluster/project/infk/cvg/students/junwang/SP1_wholePipeline/PlaneMatching/trained_models/gl18-tl-resnet50-gem-w-83fdc30.pth'
+    gem_model = load_gem_model(network_path)
+
+    root_dir = "/cluster/project/infk/cvg/students/junwang/hypersimLite"
+    test_list_path = os.path.join(root_dir, "test_scenes.txt")
+    with open(test_list_path, "r") as f:
+        test_scene = f.read().splitlines()[15:20]
+    
+    err_q_essential = []
+    err_t_essential = []
+    err_q_best_homography = []
+    err_t_best_homography = []
+    err_q_ranked_homography = []
+    err_t_ranked_homography = []
+    count = 1
+    for scene in test_scene:
+        # if count == 3:
+        #     break
+        print("Processing scene {}".format(scene))
+        print("No {} / {}".format(count, len(test_scene)))
+        err = process_scene(scene, plane_model=plane_model, gem_model=gem_model, raft_model=raft_model)
+        err_q_essential.append(err['err_q_essential'])
+        err_t_essential.append(err['err_t_essential'])
+        err_q_best_homography.append(err['err_q_best_homography'])
+        err_t_best_homography.append(err['err_t_best_homography'])
+        err_q_ranked_homography.append(err['err_q_ranked_homography'])
+        err_t_ranked_homography.append(err['err_t_ranked_homography'])
+        count += 1
+
+
+    err_q_essential = np.concatenate(err_q_essential)
+    err_t_essential = np.concatenate(err_t_essential)
+    err_q_best_homography = np.concatenate(err_q_best_homography)
+    err_t_best_homography = np.concatenate(err_t_best_homography)
+    err_q_ranked_homography = np.concatenate(err_q_ranked_homography)
+    err_t_ranked_homography = np.concatenate(err_t_ranked_homography)
+
+    print('mean err_q_essential: {:.4f}, mean err_t_essential: {:.4f}'.format(np.mean(err_q_essential), np.mean(err_t_essential)))
+    print('mean err_q_best_homography: {:.4f}, mean err_t_best_homography: {:.4f}'.format(np.mean(err_q_best_homography), np.mean(err_t_best_homography)))
+    print('mean err_q_ranked_homography: {:.4f}, mean err_t_ranked_homography: {:.4f}'.format(np.mean(err_q_ranked_homography), np.mean(err_t_ranked_homography)))
+    
+    print('median err_q_essential: {:.4f}, median err_t_essential: {:.4f}'.format(np.median(err_q_essential), np.median(err_t_essential)))
+    print('median err_q_best_homography: {:.4f}, median err_t_best_homography: {:.4f}'.format(np.median(err_q_best_homography), np.median(err_t_best_homography)))
+    print('median err_q_ranked_homography: {:.4f}, median err_t_ranked_homography: {:.4f}'.format(np.median(err_q_ranked_homography), np.median(err_t_ranked_homography)))
+
+
+
+
+
+    
+
+
+
+    
 
 
 

@@ -2,3 +2,7 @@
 .idea
 HypersimLite/preview/
 *.pyc
+*.jpg
+*.png
+lsf.*
+*.out

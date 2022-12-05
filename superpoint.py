@@ -1,5 +1,5 @@
 import numpy as np
-import cv2
+import os
 import matplotlib.pyplot as plt
 import math
 from torch.utils.data import DataLoader
@@ -15,25 +15,27 @@ MIN_MATCH_COUNT = 8
 FLANN_INDEX_KDTREE = 1
 
 def getBestMatches(ref_des, q_des, ratio=0.9):
-    bf = cv2.BFMatcher()
+    bf = cv2.BFMatcher(crossCheck=True)
     # return  bf.match(ref_des, q_des)
     # index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
     # search_params = dict(checks=50)
     # flann = cv2.FlannBasedMatcher(index_params, search_params)
     ref_des = ref_des.transpose()
     q_des = q_des.transpose()
-    matches = bf.knnMatch(ref_des, q_des, k=2)  # first k best matches
+    matches = bf.match(ref_des, q_des)  # first k best matches
 
     best_matches = []
     best_matches_numpy = []
 
-    # from Lowe's
-    for i, (m, n) in enumerate(matches):
-        if m.distance < ratio * n.distance:
-            best_matches_numpy.append((m.queryIdx, m.trainIdx))
-            best_matches.append(m)
+    # # from Lowe's
+    # for i, (m, n) in enumerate(matches):
+    #     if m.distance < ratio * n.distance:
+    #         best_matches_numpy.append((m.queryIdx, m.trainIdx))
+    #         best_matches.append(m)
 
-    return best_matches, best_matches_numpy
+    # return best_matches, best_matches_numpy
+
+    return matches
 
 
 def draw_matches(img1, kp1, img2, kp2, matches, color=None):
@@ -68,11 +70,11 @@ def draw_matches(img1, kp1, img2, kp2, matches, color=None):
     # Draw lines between matches.  Make sure to offset kp coords in second image appropriately.
     r = 4
     thickness = 2
-    if color:
+    if type(color) is not None:
         c = color
     for m in matches:
         # Generate random color for RGB/BGR and grayscale images as needed.
-        if not color:
+        if type(color) is None:
             c = np.random.randint(0, 256, 3) if len(img1.shape) == 3 else np.random.randint(0, 256)
         # So the keypoint locs are stored as a tuple of floats.  cv2.line(), like most other things,
         # wants locs as a tuple of ints.
@@ -84,12 +86,11 @@ def draw_matches(img1, kp1, img2, kp2, matches, color=None):
         cv2.circle(new_img, end2, r, c, thickness)
     return new_img
 
-def main():
+def process_scene(scene_name, sp_model):
     # load dataset
-    dataset = HypersimImagePairDataset(data_dir="/home/junchi/sp1/dataset/hypersim", scene_name='ai_001_001')
+    dataset = HypersimImagePairDataset(data_dir="/cluster/project/infk/cvg/students/junwang/hypersim", scene_name=scene_name)
     loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
 
-    sp_model = load_sp_model()
     err_q_list = []
     err_t_list = []
     for step, batch in tqdm(enumerate(loader), total=len(loader)):
@@ -125,15 +126,15 @@ def main():
         q_kp = q_kp[:2, mask_2].transpose()
         q_des = q_des[:, mask_2]
 
-        best_matches, best_matches_numpy = getBestMatches(ref_des, q_des, ratio=0.95)
-        best_matches_numpy = np.array(best_matches_numpy)
+        best_matches = getBestMatches(ref_des, q_des, ratio=0.95)
+        best_matches_numpy = np.array(best_matches)
         # # using sift to extract features
         # sift = cv2.SIFT_create()
         # ref_kp, ref_des = sift.detectAndCompute(gray_1, None)
         # q_kp, q_des = sift.detectAndCompute(gray_2, None)
         # best_matches = getBestMatches(ref_des, q_des, ratio=0.95)
 
-        img3 = draw_matches(image_1, ref_kp, image_2, q_kp, best_matches_numpy[:], None)
+        # img3 = draw_matches(image_1, ref_kp, image_2, q_kp, best_matches_numpy[:], None)
         # plt.imshow(img3)
         # plt.show()
         # pass
@@ -147,22 +148,28 @@ def main():
         src_pts = np.float32([ref_kp[m.queryIdx] for m in best_matches])
         dst_pts = np.float32([q_kp[m.trainIdx] for m in best_matches])
 
+        if len(src_pts) <= 5:
+            continue
+
         E, mask = cv2.findEssentialMat(src_pts, dst_pts, K, method=cv2.RANSAC, prob=0.99, threshold=0.5)
 
-        # # draw the matching points that pass the RANSAC
-        # draw_params = dict(matchColor=(0, 255, 0),  # draw matches in green color
-        #                    singlePointColor=None,
-        #                    matchesMask=mask.ravel().tolist(),  # draw only inliers
-        #                    flags=2)
-        # img4 = draw_matches(image_1, ref_kp, image_2, q_kp, best_matches[:], None, **draw_params)
-        # plt.imshow(img4)
-        # plt.show()
-        # pass
+        # draw the matching points that pass the RANSAC
+        if step % 10 ==0:
+            valid_src_pts = src_pts[mask.ravel() == 1]
+            valid_dst_pts = dst_pts[mask.ravel() == 1]
+            matching = np.concatenate([[np.arange(len(valid_dst_pts))], [np.arange(len(valid_dst_pts))]], axis=0).T
+            img4 = draw_matches(image_1, valid_src_pts, image_2, valid_dst_pts, matching, np.array([0, 255, 0]))    
+            plt.imshow(img4)
+            plt.savefig("sp_preview/{}_{}.jpg".format(scene_name, step))
+            # plt.show()
+        pass
 
         points, R_est, t_est, mask_pose = cv2.recoverPose(E, src_pts, dst_pts, K)
 
         # evaluate the estimated pose
         err_q, err_t = evaluate_R_t(gt_relative_pose[:3, :3], gt_relative_pose[:3, 3], R_est, t_est)
+        err_q = err_q / np.pi * 180
+        err_t = err_t / np.pi * 180
         err_q_list.append(err_q)
         err_t_list.append(err_t)
         print('err_q: {:.4f}, err_t: {:.4f}'.format(err_q, err_t))
@@ -170,8 +177,39 @@ def main():
 
     print('mean err_q: {:.4f}, mean err_t: {:.4f}'.format(np.mean(err_q_list), np.mean(err_t_list)))
     print('median err_q: {:.4f}, median err_t: {:.4f}'.format(np.median(err_q_list), np.median(err_t_list)))
+    
+    return {'err_q' : err_q_list, 
+            'err_t': err_t_list}
+
 
 if __name__ == '__main__':
-    main()
+    root_dir = "/cluster/project/infk/cvg/students/junwang/hypersimLite"
+    sp_model = load_sp_model()
+    # scene_name = "ai_001_010"
+    # scene_list = ['ai_001_001', 'ai_001_002', 'ai_001_010']
+    test_list_path = os.path.join(root_dir, "test_scenes.txt")
+    with open(test_list_path, "r") as f:
+        test_scene = f.read().splitlines()
+    
+    err_q = []
+    err_t = []
+    count = 1
+    for scene in test_scene:
+        # if count == 3:
+        #     break
+        print("Processing scene {}".format(scene))
+        print("No {} / {}".format(count, len(test_scene)))
+        err = process_scene(scene, sp_model)
+        err_q.append(err['err_q'])
+        err_t.append(err['err_t'])
+        count += 1
+    
+    err_q = np.concatenate(err_q)
+    err_t = np.concatenate(err_t)
+    print('mean err_q: {:.4f}, mean err_t: {:.4f}'.format(np.mean(err_q), np.mean(err_t)))
+    print('median err_q: {:.4f}, median err_t: {:.4f}'.format(np.median(err_q), np.median(err_t)))
+
+    # process_scene('ai_001_001')
+
 
 

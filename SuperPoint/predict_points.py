@@ -11,7 +11,7 @@ import torch
 
 def load_sp_model():
     """ Load the SuperPoint model. """
-    weights_path = '/home/junchi/sp1/SuperPointPretrainedNetwork/superpoint_v1.pth'
+    weights_path = '/cluster/project/infk/cvg/students/junwang/SP1_wholePipeline/SuperPoint/trained_models/superpoint_v1.pth'
     nms_dist = 4
     conf_thresh = 0.015
     nn_thresh = 0.7
