@@ -68,11 +68,11 @@ def draw_matches(img1, kp1, img2, kp2, matches, color=None):
     # Draw lines between matches.  Make sure to offset kp coords in second image appropriately.
     r = 4
     thickness = 2
-    if color:
+    if type(color) is not None:
         c = color
     for m in matches:
         # Generate random color for RGB/BGR and grayscale images as needed.
-        if not color:
+        if type(color) is None:
             c = np.random.randint(0, 256, 3) if len(img1.shape) == 3 else np.random.randint(0, 256)
         # So the keypoint locs are stored as a tuple of floats.  cv2.line(), like most other things,
         # wants locs as a tuple of ints.
@@ -86,7 +86,7 @@ def draw_matches(img1, kp1, img2, kp2, matches, color=None):
 
 def main():
     # load dataset
-    dataset = HypersimImagePairDataset(data_dir="/home/junchi/sp1/dataset/hypersim", scene_name='ai_001_001')
+    dataset = HypersimImagePairDataset(data_dir="/home/junchi/sp1/dataset/hypersim", scene_name='ai_001_010')
     loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
 
     sp_model = load_sp_model()
@@ -133,7 +133,7 @@ def main():
         # q_kp, q_des = sift.detectAndCompute(gray_2, None)
         # best_matches = getBestMatches(ref_des, q_des, ratio=0.95)
 
-        img3 = draw_matches(image_1, ref_kp, image_2, q_kp, best_matches_numpy[:], None)
+        # img3 = draw_matches(image_1, ref_kp, image_2, q_kp, best_matches_numpy[:], None)
         # plt.imshow(img3)
         # plt.show()
         # pass
@@ -149,15 +149,18 @@ def main():
 
         E, mask = cv2.findEssentialMat(src_pts, dst_pts, K, method=cv2.RANSAC, prob=0.99, threshold=0.5)
 
-        # # draw the matching points that pass the RANSAC
+        # draw the matching points that pass the RANSAC
         # draw_params = dict(matchColor=(0, 255, 0),  # draw matches in green color
         #                    singlePointColor=None,
         #                    matchesMask=mask.ravel().tolist(),  # draw only inliers
         #                    flags=2)
-        # img4 = draw_matches(image_1, ref_kp, image_2, q_kp, best_matches[:], None, **draw_params)
-        # plt.imshow(img4)
-        # plt.show()
-        # pass
+        valid_src_pts = src_pts[mask.ravel() == 1]
+        valid_dst_pts = dst_pts[mask.ravel() == 1]
+        matching = np.concatenate([[np.arange(len(valid_dst_pts))], [np.arange(len(valid_dst_pts))]], axis=0).T
+        img4 = draw_matches(image_1, valid_src_pts, image_2, valid_dst_pts, matching, np.array([0, 255, 0]))
+        plt.imshow(img4)
+        plt.show()
+        pass
 
         points, R_est, t_est, mask_pose = cv2.recoverPose(E, src_pts, dst_pts, K)
 

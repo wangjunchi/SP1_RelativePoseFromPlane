@@ -20,13 +20,13 @@ from scipy.spatial.transform import Rotation
 from Dataset.hypersim_image_pair_dataset import HypersimImagePairDataset
 from PlaneDetection.predict_planes import predict_image, load_plane_detector
 from PlaneMatching.predict_matching import predict_matching, load_gem_model
-from HomographyEstimation.predict_homography import predict_homography, extract_plane_patch, load_model, restoreHomography
+from RaftBA.predict_homography import load_model, predict_homography, extract_plane_patch, restoreHomography
 from Utility.utils import *
 
 
 def main():
     # load dataset
-    dataset = HypersimImagePairDataset(data_dir="/home/junchi/sp1/dataset/hypersim", scene_name='ai_001_010')
+    dataset = HypersimImagePairDataset(data_dir="/home/junchi/sp1/dataset/hypersim", scene_name='ai_001_001')
     loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
 
     # raft args
@@ -49,7 +49,8 @@ def main():
 
     pec_weights_path = "/home/junchi/sp1/project_junchi/pythonProject/whole_pipeline/PlaneDetection/trained_models/pec_junchi.tar"
     plane_model = load_plane_detector(pec_weights_path)
-    raft_model = load_model(raft_args, config)
+    raft_weight_path = "/home/junchi/sp1/project_junchi/pythonProject/whole_pipeline/RaftBA/trained_models/model_29_epoch_no_mask.pth"
+    raft_model = load_model(raft_weight_path)
     network_path = '/home/junchi/sp1/project_junchi/pythonProject/whole_pipeline/PlaneMatching/trained_models/gl18-tl-resnet50-gem-w-83fdc30.pth'
     gem_model = load_gem_model(network_path)
 
@@ -154,10 +155,10 @@ def main():
         model.eval()
         model.cuda()
         # resize image and plane mask to 192*256
-        image_1 = cv2.resize(image_1.permute(1, 2, 0).numpy(), (256, 192))
-        image_2 = cv2.resize(image_2.permute(1, 2, 0).numpy(), (256, 192))
-        labels_1 = cv2.resize(labels_1, (256, 192), interpolation=cv2.INTER_NEAREST)
-        labels_2 = cv2.resize(labels_2, (256, 192), interpolation=cv2.INTER_NEAREST)
+        image_1 = cv2.resize(image_1.permute(1, 2, 0).numpy(), (512, 384))
+        image_2 = cv2.resize(image_2.permute(1, 2, 0).numpy(), (512, 384))
+        labels_1 = cv2.resize(labels_1, (512, 384), interpolation=cv2.INTER_NEAREST)
+        labels_2 = cv2.resize(labels_2, (512, 384), interpolation=cv2.INTER_NEAREST)
         K = np.array([[886.81, 0, 512], [0, 886.81, 384], [0, 0, 1]])
 
         gt_r = gt_relative_pose[:3, :3]
@@ -173,7 +174,7 @@ def main():
         proposed_t = []
         err_t_list = []
         err_r_list = []
-        min_num_points = 128*128 + 1
+        min_num_points = 240*320 + 1
 
         best_homo_id = -1
         best_homo_metric = 1000
@@ -189,43 +190,46 @@ def main():
                 image_patch_1, mask_1, origin_x_1, origin_y_1 = extract_plane_patch(image_1, plane_mask_1)
                 image_patch_2, mask_2, origin_x_2, origin_y_2 = extract_plane_patch(image_2, plane_mask_2)
 
-                # # mask out the background
-                # image_patch_1 = image_patch_1 * mask_1[..., None]
-                # image_patch_2 = image_patch_2 * mask_2[..., None]
-                estimates_grid, H = predict_homography(model, image_patch_1, image_patch_2)
-                estimates_grid = estimates_grid[0]
+                # mask out the background
+                image_patch_1 = image_patch_1 * mask_1[..., None]
+                image_patch_2 = image_patch_2 * mask_2[..., None]
+                estimates_grid, H = predict_homography(model, image_patch_1, image_patch_2, mask_1)
 
-                # sample points
-                h, w, _ = image_patch_1.shape
-                X, Y = np.meshgrid(np.linspace(0, w - 1, w),
-                                   np.linspace(0, h - 1, h))
-                X, Y = X.flatten(), Y.flatten()
-                pts_src = np.stack([X, Y], axis=1)
-                pts_src = pts_src[mask_1.flatten()]
-                estimates_grid = estimates_grid[mask_1.flatten()]
-                Homo, mask = cv2.findHomography(pts_src, estimates_grid, method=cv2.RANSAC, ransacReprojThreshold=1)
-                _K = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
-                # E_Homo, mask = cv2.findEssentialMat(pts_src, estimates_grid, _K, cv2.RANSAC, 0.999, 0.1, None)
-                valid_pts_num = np.sum(mask)
-                pts_src = pts_src[mask.flatten() == 1]
+                image_patch_1_warpped = cv2.warpPerspective(image_patch_1, H, (320, 240))
 
-                pts_src = pts_src+np.array([origin_x_1, origin_y_1])
-                pts_src = pts_src * 4
-                pts_dst = estimates_grid
-                pts_dst = pts_dst[mask.flatten() == 1]
-                pts_dst = pts_dst+np.array([origin_x_2, origin_y_2])
-                pts_dst = pts_dst * 4
-                sampled_pts_src, sampled_pts_dst = sample_points(pts_src, pts_dst, int(valid_pts_num * 0.1))
-                min_num_points = min(min_num_points, len(sampled_pts_src))
-                points_src.append(sampled_pts_src)
-                points_dst.append(sampled_pts_dst)
-                points_src_all.append(pts_src)
-                points_dst_all.append(pts_dst)
+                # estimates_grid = estimates_grid[0]
+                #
+                # # sample points
+                # h, w, _ = image_patch_1.shape
+                # X, Y = np.meshgrid(np.linspace(0, w - 1, w),
+                #                    np.linspace(0, h - 1, h))
+                # X, Y = X.flatten(), Y.flatten()
+                # pts_src = np.stack([X, Y], axis=1)
+                # pts_src = pts_src[mask_1.flatten()]
+                # estimates_grid = estimates_grid[mask_1.flatten()]
+                # Homo, mask = cv2.findHomography(pts_src, estimates_grid, method=cv2.RANSAC, ransacReprojThreshold=1)
+                # _K = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+                # # E_Homo, mask = cv2.findEssentialMat(pts_src, estimates_grid, _K, cv2.RANSAC, 0.999, 0.1, None)
+                # valid_pts_num = np.sum(mask)
+                # pts_src = pts_src[mask.flatten() == 1]
+                #
+                # pts_src = pts_src+np.array([origin_x_1, origin_y_1])
+                # pts_src = pts_src * 4
+                # pts_dst = estimates_grid
+                # pts_dst = pts_dst[mask.flatten() == 1]
+                # pts_dst = pts_dst+np.array([origin_x_2, origin_y_2])
+                # pts_dst = pts_dst * 4
+                # sampled_pts_src, sampled_pts_dst = sample_points(pts_src, pts_dst, int(valid_pts_num * 0.1))
+                # min_num_points = min(min_num_points, len(sampled_pts_src))
+                # points_src.append(sampled_pts_src)
+                # points_dst.append(sampled_pts_dst)
+                # points_src_all.append(pts_src)
+                # points_dst_all.append(pts_dst)
 
 
-                # sample reference point
-                ref_point_src = sampled_pts_src
-                ref_point_dst = sampled_pts_dst
+                # # sample reference point
+                # ref_point_src = sampled_pts_src
+                # ref_point_dst = sampled_pts_dst
 
                 # print(H)
                 origin_1 = (origin_x_1, origin_y_1)
@@ -254,9 +258,9 @@ def main():
                         err_t_homo.append(err_t)
                         print('err_q for homo {}: '.format(i), err_q)
                         print('err_t: for homo {}: '.format(i), err_t)
-                        if (err_q) < best_homo_metric:
+                        if (err_q+err_t/5.0) < best_homo_metric:
                             best_homo_id = id
-                            best_homo_metric = err_q
+                            best_homo_metric = err_q + err_t/5.0
                         id += 1
                     else:
                         angle = Rotation.from_matrix(R)
@@ -345,8 +349,8 @@ def main():
 
     print('err_q_essential: ', np.mean(err_q_essential))
     print('err_t_essential: ', np.mean(err_t_essential))
-    print('err_q_best_homography: ', np.mean(err_q_best_homography))
-    print('err_t_best_homography: ', np.mean(err_t_best_homography))
+    print('err_q_best_homography: ', np.median(err_q_best_homography))
+    print('err_t_best_homography: ', np.median(err_t_best_homography))
     print('err_q_ranked_homography: ', np.mean(err_q_ranked_homography))
     print('err_t_ranked_homography: ', np.mean(err_t_ranked_homography))
 
