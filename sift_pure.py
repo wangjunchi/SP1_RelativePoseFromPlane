@@ -212,22 +212,24 @@ def process_scene(scene_name):
 
         E, mask = cv2.findEssentialMat(src_pts, dst_pts, K, method=cv2.RANSAC, prob=0.99, threshold=0.5)
 
-        if step % 10 == 0:
-            # draw the matching points that pass the RANSAC
-            draw_params = dict(matchColor=(0, 255, 0),  # draw matches in green color
-                            singlePointColor=None,
-                            matchesMask=mask.ravel().tolist(),  # draw only inliers
-                            flags=2)
-            img4 = cv2.drawMatches(image_1, ref_kp, image_2, q_kp, best_matches[:], None, **draw_params)
-            plt.imshow(img4)
-            plt.savefig("sift_preview/{}_{}.jpg".format(scene_name, step), dpi=300)
-            # plt.show()
-            # pass
+        # if step % 10 == 0:
+        #     # draw the matching points that pass the RANSAC
+        #     draw_params = dict(matchColor=(0, 255, 0),  # draw matches in green color
+        #                     singlePointColor=None,
+        #                     matchesMask=mask.ravel().tolist(),  # draw only inliers
+        #                     flags=2)
+        #     img4 = cv2.drawMatches(image_1, ref_kp, image_2, q_kp, best_matches[:], None, **draw_params)
+        #     plt.imshow(img4)
+        #     plt.savefig("sift_preview/{}_{}.jpg".format(scene_name, step), dpi=300)
+        #     # plt.show()
+        #     # pass
 
         points, R_est, t_est, mask_pose = cv2.recoverPose(E, src_pts, dst_pts, K, mask)
 
         # evaluate the estimated pose
         err_q, err_t = evaluate_R_t(gt_relative_pose[:3, :3], gt_relative_pose[:3, 3], R_est, t_est)
+        err_q = err_q / np.pi * 180
+        err_t = err_t / np.pi * 180
         err_q_list.append(err_q)
         err_t_list.append(err_t)
         print('sample {}: err_q: {:.4f}, err_t: {:.4f}'.format(step, err_q, err_t))
