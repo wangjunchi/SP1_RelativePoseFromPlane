@@ -16,18 +16,8 @@ FLANN_INDEX_KDTREE = 1
 
 def getBestMatches(ref_des, q_des, ratio=0.9):
     bf = cv2.BFMatcher(crossCheck=True)
-    # return  bf.match(ref_des, q_des)
-    # index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-    # search_params = dict(checks=50)
-    # flann = cv2.FlannBasedMatcher(index_params, search_params)
-    matches = bf.match(ref_des, q_des)  # first k best matches
 
-    # best_matches = []
-    # from Lowe's
-    # for i, (m, n) in enumerate(matches):
-    #     if m.distance < ratio * n.distance:
-    #         best_matches.append(m)
-    # # print(type(best_matches[0]))
+    matches = bf.match(ref_des, q_des)  # first k best matches
 
     return matches
 

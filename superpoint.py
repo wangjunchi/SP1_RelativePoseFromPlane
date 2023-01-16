@@ -16,24 +16,10 @@ FLANN_INDEX_KDTREE = 1
 
 def getBestMatches(ref_des, q_des, ratio=0.9):
     bf = cv2.BFMatcher(crossCheck=True)
-    # return  bf.match(ref_des, q_des)
-    # index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-    # search_params = dict(checks=50)
-    # flann = cv2.FlannBasedMatcher(index_params, search_params)
+
     ref_des = ref_des.transpose()
     q_des = q_des.transpose()
     matches = bf.match(ref_des, q_des)  # first k best matches
-
-    best_matches = []
-    best_matches_numpy = []
-
-    # # from Lowe's
-    # for i, (m, n) in enumerate(matches):
-    #     if m.distance < ratio * n.distance:
-    #         best_matches_numpy.append((m.queryIdx, m.trainIdx))
-    #         best_matches.append(m)
-
-    # return best_matches, best_matches_numpy
 
     return matches
 
@@ -127,17 +113,6 @@ def process_scene(scene_name, sp_model):
         q_des = q_des[:, mask_2]
 
         best_matches = getBestMatches(ref_des, q_des, ratio=0.95)
-        best_matches_numpy = np.array(best_matches)
-        # # using sift to extract features
-        # sift = cv2.SIFT_create()
-        # ref_kp, ref_des = sift.detectAndCompute(gray_1, None)
-        # q_kp, q_des = sift.detectAndCompute(gray_2, None)
-        # best_matches = getBestMatches(ref_des, q_des, ratio=0.95)
-
-        # img3 = draw_matches(image_1, ref_kp, image_2, q_kp, best_matches_numpy[:], None)
-        # plt.imshow(img3)
-        # plt.show()
-        # pass
 
         # compute the essential matrix
         # Camera Intrisics matrix

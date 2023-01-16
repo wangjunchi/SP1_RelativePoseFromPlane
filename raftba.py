@@ -32,12 +32,9 @@ def process_scene(scene_name, plane_model, gem_model, raft_model):
     loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
     
     # evaluation
-    err_q_essential = []
-    err_t_essential = []
     err_q_best_homography = []
     err_t_best_homography = []
-    err_q_ranked_homography = []
-    err_t_ranked_homography = []
+
     for step, batch in tqdm(enumerate(loader), total=len(loader), disable=False):
         # if step>5:
         #     break
@@ -64,7 +61,6 @@ def process_scene(scene_name, plane_model, gem_model, raft_model):
         # plt.subplot(2, 2, 4)
         # plt.imshow(segmentation_2)
         # plt.show()
-        pass
 
         # predict planes
         labels_1, depth_1, normals_1 = predict_image(sample_1['image'], plane_model)
@@ -120,7 +116,6 @@ def process_scene(scene_name, plane_model, gem_model, raft_model):
         # plt.subplot(2, 2, 4)
         # plt.imshow(new_labels_2_color)
         # plt.show()
-        pass
 
         # get gt camera pose
         gt_pose_1 = sample_1['camera_pose'][0].numpy()
@@ -143,33 +138,22 @@ def process_scene(scene_name, plane_model, gem_model, raft_model):
         gt_angle = gt_angle.as_euler('xyz', degrees=True)
 
         print('gt_angle: ', gt_angle)
-        points_src = []
-        points_dst = []
-        points_src_all = []
-        points_dst_all = []
+
         proposed_r = []
         proposed_t = []
         err_q_homo = []
         err_t_homo = []
-        err_pose = []
-        min_num_points = 128*128 + 1
 
         best_homo_id = -1
         best_pose_id = -1
         best_homo_metric = 1000
-        best_pose_metric = 1000
-        err_q_essential = []
-        err_t_essential = []
+
         err_q_best_homography = []
         err_t_best_homography = []
         err_q_best_pose = []
         err_t_best_pose = []
-        err_q_reproj_homography = []
-        err_t_reproj_homography = []
-        err_q_epipo_homography = []
-        err_t_epipo_homography = []
+
         id = 0
-        pose_id = 0
         for i in range(len(pred_match)):
             matching_label = int(pred_match[i]) + 1
             if matching_label != 0:
@@ -182,26 +166,7 @@ def process_scene(scene_name, plane_model, gem_model, raft_model):
                 image_patch_1 = image_patch_1 * mask_1[..., None]
                 image_patch_2 = image_patch_2 * mask_2[..., None]
                 estimates_grid, H = predict_homography(model, image_patch_1, image_patch_2, mask_1)
-                estimates_grid = estimates_grid[0]
 
-                # sample points
-                h, w, _ = image_patch_1.shape
-                X, Y = np.meshgrid(np.linspace(0, w - 1, w),
-                                   np.linspace(0, h - 1, h))
-                X, Y = X.flatten(), Y.flatten()
-                pts_src = np.stack([X, Y], axis=1)
-                pts_src = pts_src+np.array([origin_x_1, origin_y_1])
-                pts_src = pts_src * 2
-
-                pts_dst = estimates_grid.reshape(2, -1).detach().cpu().numpy()
-                pts_dst = np.transpose(pts_dst) + pts_src
-
-                sampled_pts_src, sampled_pts_dst = sample_points(pts_src, pts_dst, 100)
-
-                points_src.append(sampled_pts_src)
-                points_dst.append(sampled_pts_dst)
-                points_src_all.append(pts_src)
-                points_dst_all.append(pts_dst)
             
                 origin_1 = (origin_x_1, origin_y_1)
                 origin_2 = (origin_x_2, origin_y_2)
@@ -229,32 +194,12 @@ def process_scene(scene_name, plane_model, gem_model, raft_model):
                         print('err_q for homo {}: '.format(i), err_q)
                         print('err_t: for homo {}: '.format(i), err_t)
 
-                        E = np.linalg.inv(K.T) @ R @ skew(T[:,0]) @ np.linalg.inv(K)
-    #         # convert E to homogenous coordinates
-
-                        error_epi = compute_reprojection_error(E, sampled_pts_src.T, sampled_pts_dst.T)
-                        error_epi = np.mean(error_epi)
-                        print("error_proj = ", error_epi)
-                        err_pose.append(error_epi)
-
                         if (err_q+err_t/1.0) < best_homo_metric:
                             best_homo_id = id
                             best_homo_metric = err_q+err_t/1.0
                         id += 1
 
-                        if error_epi<best_pose_metric:
-                            best_pose_id = pose_id
-                            best_pose_metric = error_epi
-                        pose_id += 1
-                    else:
-                        angle = Rotation.from_matrix(R)
-                        angle = angle.as_euler('xyz', degrees=True)
-                        # print('not valid homo angle', angle)
-                        # print('not valid homo translation: ', T)
-                    # convert rotation matrix to euler angles
-                    # r = Rotation.from_matrix(R)
-                    # angles = r.as_euler("xyz", degrees=True)
-                    # print('est angles from homography: ', angles)
+
         if best_homo_id >= 0:
             err_q_best_homography.append(err_q_homo[best_homo_id])
             err_t_best_homography.append(err_t_homo[best_homo_id])
@@ -267,99 +212,11 @@ def process_scene(scene_name, plane_model, gem_model, raft_model):
             print('err_q for best pose ', err_q_homo[best_pose_id])
             print('err_t for best pose ', err_t_homo[best_pose_id])
 
-
-    #     # concat the sampled points
-    #     if len(points_src) == 0:
-    #         continue
-
-    #     points_src_matching = np.concatenate(points_src, axis=0)
-    #     points_dst_matching = np.concatenate(points_dst, axis=0)
-    #     E, mask = cv2.findEssentialMat(points_src_matching, points_dst_matching, K, cv2.RANSAC, 0.999, 0.5, None)
-    #     # restore pose from essential matrix
-    #     points_src_matching = points_src_matching[mask.flatten() == 1]
-    #     points_dst_matching = points_dst_matching[mask.flatten() == 1]
-    #     _, R, T, _ = cv2.recoverPose(E, points_src_matching, points_dst_matching, K)
-
-    #     # print('est angle from matching: ', Rotation.from_matrix(R).as_euler('xyz', degrees=True))
-    #     err_q, err_t = evaluate_R_t(gt_r, gt_relative_pose[:3, 3], R, T)
-    #     err_q_essential.append(err_q)
-    #     err_t_essential.append(err_t)
-    #     print('from essential: err_q: ', err_q)
-    #     print('from essential: err_t: ', err_t)
-
-    #     # compute reprojection error for each proposed solution
-    #     points_src_homo = []
-    #     points_dst_homo = []
-    #     for i in range(len(points_src)):
-    #         plane_points_src = points_src_all[i]
-    #         plane_points_dst = points_dst_all[i]
-    #         sampled_pts_src, sampled_pts_dst = sample_points(plane_points_src, plane_points_dst, 100)
-    #         points_src_homo.append(sampled_pts_src)
-    #         points_dst_homo.append(sampled_pts_dst)
-
-    #     points_src_homo = np.concatenate(points_src_homo, axis=0)
-    #     points_dst_homo = np.concatenate(points_dst_homo, axis=0)
-
-
-    #     num_proposed = len(proposed_r)
-    #     assert num_proposed == len(proposed_t), 'number of proposed rotation and translation should be the same'
-    #     reprojection_error = []
-    #     epipolar_error = []
-    #     for i in range(num_proposed):
-    #         R = proposed_r[i]
-    #         T = proposed_t[i]
-    #         # recover essential matrix
-    #         E = np.linalg.inv(K.T) @ R @ skew(T[:,0]) @ np.linalg.inv(K)
-    #         # convert E to homogenous coordinates
-
-    #         error_epi = compute_reprojection_error(E, points_src_homo.T, points_dst_homo.T)
-    #         error_proj = compute_reprojection_error2(R, T, K, points_src_homo.T, points_dst_homo.T)
-    #         error_epi = np.mean(error_epi)
-    #         error_proj = np.mean(error_proj)
-    #         reprojection_error.append(error_proj)
-    #         epipolar_error.append(error_epi)
-
-    #     min_proj_error_index = np.argmin(reprojection_error)
-    #     min_epi_error_index = np.argmin(epipolar_error)
-
-    #     # evaluate
-    #     err_q, err_t = evaluate_R_t(gt_r, gt_relative_pose[:3, 3], proposed_r[min_proj_error_index], proposed_t[min_proj_error_index])
-    #     err_q_reproj_homography.append(err_q)
-    #     err_t_reproj_homography.append(err_t)
-    #     print('from minimal reprojection error homography: err_q: ', err_q)
-    #     print('from minimal reprojection error homography: err_t: ', err_t)
-
-    #     err_q, err_t = evaluate_R_t(gt_r, gt_relative_pose[:3, 3], proposed_r[min_epi_error_index], proposed_t[min_epi_error_index])
-    #     err_q_epipo_homography.append(err_q)
-    #     err_t_epipo_homography.append(err_t)
-    #     print('from minimal epipolar error homography: err_q: ', err_q)
-    #     print('from minimal epipolar error homography: err_t: ', err_t)
-
-    # # print('err_q_essential: ', np.mean(err_q_essential))
-    # # print('err_t_essential: ', np.mean(err_t_essential))
-    # print('err_q_best_homography: ', np.mean(err_q_best_homography))
-    # print('err_t_best_homography: ', np.mean(err_t_best_homography))
-    # # print('err_q_ranked_homography: ', np.mean(err_q_ranked_homography))
-    # # print('err_t_ranked_homography: ', np.mean(err_t_ranked_homography))
-
-    # return {
-    #     'err_q_essential' : err_q_essential,
-    #     'err_t_essential' : err_t_essential,
-    #     'err_q_best_homography' : err_q_best_homography,
-    #     'err_t_best_homography' : err_t_best_homography,
-    #     'err_q_ranked_homography' : err_q_ranked_homography,
-    #     'err_t_ranked_homography' : err_t_ranked_homography
-    # }
-
     return {
-        'err_q_best_homography' : err_q_best_homography,
-        'err_t_best_homography' : err_t_best_homography,
-        # 'err_q_essential': err_q_essential,
-        # 'err_t_essential': err_t_essential,
+        'err_q_best_homography': err_q_best_homography,
+        'err_t_best_homography': err_t_best_homography,
         'err_q_reproj_homography': err_q_best_pose,
         'err_t_reproj_homography': err_t_best_pose,
-        # 'err_q_epipo_homography': err_q_epipo_homography,
-        # 'err_t_epipo_homography': err_t_epipo_homography,
     }
 
 def main():
@@ -392,15 +249,10 @@ def main():
     test_list_path = os.path.join(root_dir, "test_scenes.txt")
     with open(test_list_path, "r") as f:
         test_scene = f.read().splitlines()
-    
-    err_q_essential = []
-    err_t_essential = []
+
     err_q_best_homography = []
     err_t_best_homography = []
-    err_q_reproj_homography = []
-    err_t_reproj_homography = []
-    err_q_epipo_homography = []
-    err_t_epipo_homography = []
+
     count = 1
     for scene in test_scene:
         # if count == 3:
@@ -409,35 +261,18 @@ def main():
         print("Processing scene {}".format(scene))
         print("No {} / {}".format(count, len(test_scene)))
         err = process_scene(scene, plane_model=plane_model, gem_model=gem_model, raft_model=raft_model)
-        # err_q_essential.append(err['err_q_essential'])
-        # err_t_essential.append(err['err_t_essential'])
+
         err_q_best_homography.append(err['err_q_best_homography'])
         err_t_best_homography.append(err['err_t_best_homography'])
-        err_q_reproj_homography.append(err['err_q_reproj_homography'])
-        err_t_reproj_homography.append(err['err_t_reproj_homography'])
-        # err_q_epipo_homography.append(err['err_q_epipo_homography'])
-        # err_t_epipo_homography.append(err['err_t_epipo_homography'])
-        # err_q_ranked_homography.append(err['err_q_ranked_homography'])
-        # err_t_ranked_homography.append(err['err_t_ranked_homography'])
+
         count += 1
 
-
-    # err_q_essential = np.concatenate(err_q_essential)
-    # err_t_essential = np.concatenate(err_t_essential)
     err_q_best_homography = np.concatenate(err_q_best_homography)
     err_t_best_homography = np.concatenate(err_t_best_homography)
-    err_q_reproj_homography = np.concatenate(err_q_reproj_homography)
-    err_t_reproj_homography = np.concatenate(err_t_reproj_homography)
-    # err_q_ranked_homography = np.concatenate(err_q_ranked_homography)
-    # err_t_ranked_homography = np.concatenate(err_t_ranked_homography)
 
-    # print('mean err_q_essential: {:.4f}, mean err_t_essential: {:.4f}'.format(np.mean(err_q_essential), np.mean(err_t_essential)))
     print('mean err_q_best_homography: {:.4f}, mean err_t_best_homography: {:.4f}'.format(np.mean(err_q_best_homography), np.mean(err_t_best_homography)))
-    print('mean err_q_reproj_homography: {:.4f}, mean err_t_reproj_homography: {:.4f}'.format(np.mean(err_q_reproj_homography), np.mean(err_t_reproj_homography)))
-    
-    # print('median err_q_essential: {:.4f}, median err_t_essential: {:.4f}'.format(np.median(err_q_essential), np.median(err_t_essential)))
+
     print('median err_q_best_homography: {:.4f}, median err_t_best_homography: {:.4f}'.format(np.median(err_q_best_homography), np.median(err_t_best_homography)))
-    print('median err_q_reproj_homography: {:.4f}, median err_t_reproj_homography: {:.4f}'.format(np.median(err_q_reproj_homography), np.median(err_t_reproj_homography)))
 
 
 
