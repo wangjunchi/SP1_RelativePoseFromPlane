@@ -6,4 +6,4 @@
 #SBATCH --job-name="raftba_1_1"
 #SBATCH --mem-per-cpu=1024
 
-python -u raftba.py
+python raftba.py

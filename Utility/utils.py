@@ -73,7 +73,7 @@ def compute_reprojection_error2(R, t, K, points_1, points_2):
     points_1_proj = points_1_proj[:2]
 
     # compute reprojection error
-    error = np.sum(np.abs(points_1_proj - points_1), axis=0)
+    error = np.sum(np.abs((points_1_proj - points_1)), axis=0)
 
     return error
 
