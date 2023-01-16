@@ -7,9 +7,9 @@ This is part of the code for my semester project at ETH Zurich. The goal of this
 ![vis](images/vis_pipeline.png)
 
 ## Dependencies
-To generate image pairs from Hypersim Dataset, please install Open3D
+To generate image pairs from Hypersim Dataset, please install Open3D and OpenCV
 
-To run the pipeline, please install the latest version of Pytorch, OpenCv, and Kornia
+To run the pipeline, please install the latest version of Pytorch, OpenCV, and Kornia
 
 ## Model Weights
 The trained model for each stage can be downloaded from [here](https://drive.google.com/drive/folders/1iVoUJGaS1G5IWKXZxCsw1bs_1PEuSRCf?usp=share_link)
